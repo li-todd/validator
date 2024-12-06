@@ -8,8 +8,8 @@ compatibility_date = "2024-12-06"
 # MY_VAR = "my-variable"
 
 # [[kv_namespaces]]
-# binding = "MY_KV_NAMESPACE"
-# id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# binding = "RCX_VALIDATOR"
+# id = "cdcb7b8c2e364691b0763d4b7d410d88"
 
 # [[r2_buckets]]
 # binding = "MY_BUCKET"
