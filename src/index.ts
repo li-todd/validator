@@ -24,6 +24,10 @@ interface ValidateResponse {
   data?: any
 }
 
+interface Bindings {
+  RCX_VALIDATOR: KVNamespace
+}
+
 // Validation schemas
 const postSchema = z.object({
   title: z.string().min(1).max(100),
@@ -35,7 +39,7 @@ const validateRequestSchema = z.object({
   salt: z.string().min(6),
 })
 
-const app = new Hono()
+const app = new Hono<{ Bindings: Bindings }>()
 
 // Middleware
 app.use('*', cors())
@@ -161,10 +165,21 @@ app.post('/api/:org/req-validate', validator('json', (value, c) => {
   }
   return parsed.data
 }), async (c) => {
+  const org = c.req.param('org')
   const data = c.req.valid('json') as ValidateRequest
   
   try {
-    // Simply return the validated request data
+    // Store the request in KV with a unique key
+    const timestamp = new Date().toISOString()
+    const key = `${org}:${data.id}:${timestamp}`
+    
+    await c.env.RCX_VALIDATOR.put(key, JSON.stringify({
+      org,
+      ...data,
+      timestamp
+    }))
+
+    // Return the original request format
     return c.json({
       id: data.id,
       salt: data.salt
@@ -173,6 +188,88 @@ app.post('/api/:org/req-validate', validator('json', (value, c) => {
     return c.json({ 
       ok: false, 
       message: 'Validation failed',
+      errors: [error instanceof Error ? error.message : 'Unknown error']
+    }, 500)
+  }
+})
+
+// Get validation requests for an organization
+app.get('/api/:org/req-validate', async (c) => {
+  const org = c.req.param('org')
+  
+  try {
+    const list = await c.env.RCX_VALIDATOR.list({ prefix: `${org}:` })
+    // Get the most recent request
+    if (list.keys.length > 0) {
+      const latestKey = list.keys[list.keys.length - 1]
+      const value = await c.env.RCX_VALIDATOR.get(latestKey.name)
+      if (value) {
+        const data = JSON.parse(value)
+        // Return in same format as POST request
+        return c.json({
+          id: data.id,
+          salt: data.salt
+        })
+      }
+    }
+    
+    // Return 404 if no data found
+    return c.json({
+      ok: false,
+      message: `No data found for organization: ${org}`,
+      errors: ['Organization not found']
+    }, 404)
+  } catch (error) {
+    return c.json({ 
+      ok: false, 
+      message: 'Failed to fetch request',
+      errors: [error instanceof Error ? error.message : 'Unknown error']
+    }, 500)
+  }
+})
+
+// Delete validation request for an organization
+app.delete('/api/:org/req-validate', validator('json', (value, c) => {
+  const parsed = validateRequestSchema.safeParse(value)
+  if (!parsed.success) {
+    return c.json({ 
+      ok: false, 
+      message: 'Invalid input',
+      errors: parsed.error.errors 
+    }, 400)
+  }
+  return parsed.data
+}), async (c) => {
+  const org = c.req.param('org')
+  const data = c.req.valid('json') as ValidateRequest
+  
+  try {
+    // Find the entry with matching org and id
+    const list = await c.env.RCX_VALIDATOR.list({ prefix: `${org}:${data.id}:` })
+    
+    if (list.keys.length > 0) {
+      // Delete all matching entries
+      await Promise.all(
+        list.keys.map(key => c.env.RCX_VALIDATOR.delete(key.name))
+      )
+      
+      // Return the deleted request data
+      return c.json({
+        id: data.id,
+        salt: data.salt
+      })
+    }
+    
+    // Return 404 if no matching data found
+    return c.json({
+      ok: false,
+      message: `No data found for organization: ${org}`,
+      errors: ['Organization not found']
+    }, 404)
+  } catch (error) {
+    return c.json({ 
+      ok: false, 
+      message: 'Failed to delete request',
       errors: [error instanceof Error ? error.message : 'Unknown error']
     }, 500)
   }
